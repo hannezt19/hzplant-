@@ -323,7 +323,7 @@ function addBlok(){
   const luasHa = document.getElementById('newBlokLuas').value.trim();
   if(!kode){ toast('Isi kode blok dulu'); return; }
   if(BLOKS.some(b=>b.kode.toLowerCase()===kode.toLowerCase())){ toast('Blok ini sudah ada'); return; }
-  BLOKS.push({id:uid(), kode, luasHa: luasHa?parseFloat(luasHa):null});
+  BLOKS.push({id:uid(), kode, luasHa: luasHa?parseFloat(luasHa):null, rowSpacingCm:145});
   saveBloks();
   renderKelolaBlokModal();
   toast('Blok ditambahkan');
@@ -528,13 +528,14 @@ function renderBlokInfoCard(blokId){
   const vb = `${minX-pad} ${minY-pad} ${(maxX-minX)+pad*2} ${(maxY-minY)+pad*2}`;
   const has = pb.rowP1 && pb.rowP2;
   const est = estimateRows(pb);
+  if(est) syncBlockRows(pb);
   return `
     <div class="card card-flat" style="padding:10px;margin:-2px 0 12px;">
       <svg viewBox="${vb}" style="width:100%;height:90px;background:#F3EDE0;border-radius:10px;">
         <polygon points="${pb.points.map(p=>p.x+','+p.y).join(' ')}" fill="rgba(47,107,79,0.25)" stroke="#2F6B4F" stroke-width="0.15" vector-effect="non-scaling-stroke"></polygon>
         ${has?`<line x1="${pb.rowP1.x}" y1="${pb.rowP1.y}" x2="${pb.rowP2.x}" y2="${pb.rowP2.y}" stroke="#7A2E38" stroke-width="0.25" vector-effect="non-scaling-stroke"></line>`:''}
       </svg>
-      <div class="field-sub" style="margin-top:6px;">${has && est ? `Perkiraan &plusmn; <b>${est.jumlahRow} row</b> (jarak 150cm)` : has ? 'Arah row ditandai, tapi Luas (ha) belum diisi untuk hitung perkiraan.' : 'Bentuk blok sudah ada, arah row belum ditandai (buka tab Peta).'}</div>
+      <div class="field-sub" style="margin-top:6px;">${has && est ? `Perkiraan &plusmn; <b>${est.jumlahRow} row</b> (jarak ${est.spacingCm}cm)` : has ? 'Arah row ditandai, tapi Luas (ha) belum diisi untuk hitung perkiraan.' : 'Bentuk blok sudah ada, arah row belum ditandai (buka tab Peta).'}</div>
     </div>
   `;
 }
@@ -756,8 +757,27 @@ function estimateRows(block){
   const rowLenM = rowLenPct*meterPerPctLinear;
   if(rowLenM<=0) return null;
   const widthM = (b.luasHa*10000)/rowLenM;
-  const jumlahRow = Math.max(1, Math.round(widthM/1.5));
-  return {rowLenM: Math.round(rowLenM), widthM: Math.round(widthM), jumlahRow};
+  const spacingM = (b.rowSpacingCm||145)/100;
+  const jumlahRow = Math.max(1, Math.round(widthM/spacingM));
+  return {rowLenM: Math.round(rowLenM), widthM: Math.round(widthM), jumlahRow, spacingCm: b.rowSpacingCm||145};
+}
+// Struktur per-row (status pengerjaan & assignment kode pekerja) menyatu di PETA_BLOCKS[i].rows:
+// [{kode:null|'AB', status:'putih'|'hijau'|'merah', history:[{kode,ts}]}]
+// Dipanggil setiap kali jumlah row diketahui (dari estimateRows), supaya array rows selalu tersedia
+// dan PANJANGNYA MENGIKUTI jumlahRow TERBARU tanpa menghapus assignment yang sudah ada.
+function syncBlockRows(pb){
+  const est = estimateRows(pb);
+  if(!est) return pb.rows||[];
+  if(!pb.rows) pb.rows = [];
+  let changed = false;
+  while(pb.rows.length < est.jumlahRow){ pb.rows.push({kode:null, status:'putih', history:[]}); changed = true; }
+  // Kalau jumlah row berkurang (mis. arah row diubah), baris kelebihan yang MASIH KOSONG dibuang;
+  // baris yang sudah ada assignment-nya tidak pernah dihapus otomatis (aman dari kehilangan data).
+  while(pb.rows.length > est.jumlahRow && pb.rows[pb.rows.length-1] && !pb.rows[pb.rows.length-1].kode){
+    pb.rows.pop(); changed = true;
+  }
+  if(changed) savePetaBlocks();
+  return pb.rows;
 }
 async function renderPeta(){
   const host = document.getElementById('screen-peta');
@@ -907,13 +927,14 @@ function showPetaBlockOptions(id){
   }
   const b = BLOKS.find(x=>x.id===pb.blokId);
   const est = estimateRows(pb);
+  if(est) syncBlockRows(pb);
   openModal(`
     <div class="mhead"><h2>${escapeHtml(b?b.kode:'-')}</h2><button class="mclose" onclick="closeModal()">&times;</button></div>
     ${b && b.luasHa ? `<div class="field-sub" style="margin-bottom:10px;">Luas: ${escapeHtml(b.luasHa)} ha</div>` : `<div class="field-sub" style="margin-bottom:10px;color:var(--danger);">Luas (ha) belum diisi di Kelola No Blok — perkiraan row tidak bisa dihitung.</div>`}
     ${pb.rowP1 && pb.rowP2 ? `
       <div class="card card-flat">
         <div class="field-sub">Arah row sudah ditandai.</div>
-        ${est ? `<div style="font-size:15px;font-weight:700;margin-top:6px;">&plusmn; ${est.jumlahRow} row (perkiraan)</div><div class="field-sub">Panjang row &plusmn;${est.rowLenM}m &middot; Lebar blok &plusmn;${est.widthM}m</div>` : ''}
+        ${est ? `<div style="font-size:15px;font-weight:700;margin-top:6px;">&plusmn; ${est.jumlahRow} row (perkiraan)</div><div class="field-sub">Panjang row &plusmn;${est.rowLenM}m &middot; Lebar blok &plusmn;${est.widthM}m &middot; jarak ${est.spacingCm}cm</div>` : ''}
       </div>
     ` : '<div class="field-sub" style="margin-bottom:10px;">Arah row belum ditandai.</div>'}
     <button class="btn-block" style="margin-top:10px;" onclick="closeModal();startRowCapture('${pb.id}')">Tandai Arah Row</button>
@@ -953,6 +974,8 @@ function showEditBlokName(petaId){
     <input type="text" id="editBlokKode" value="${escapeHtml(b?b.kode:'')}">
     <label class="flabel">Luas (ha)</label>
     <input type="text" id="editBlokLuas" inputmode="decimal" value="${escapeHtml(b&&b.luasHa?b.luasHa:'')}">
+    <label class="flabel">Jarak Row (cm) <span class="field-sub">(default 145)</span></label>
+    <input type="text" id="editBlokRowSpacing" inputmode="numeric" value="${escapeHtml(b&&b.rowSpacingCm?b.rowSpacingCm:145)}">
     <button class="btn-block" onclick="saveEditBlokName('${b?b.id:''}')">Simpan</button>
   `);
 }
@@ -960,9 +983,11 @@ function saveEditBlokName(blokId){
   const idx = BLOKS.findIndex(x=>x.id===blokId); if(idx<0) return;
   const kode = document.getElementById('editBlokKode').value.trim();
   const luasRaw = document.getElementById('editBlokLuas').value.trim();
+  const spacingRaw = document.getElementById('editBlokRowSpacing').value.trim();
   if(!kode){ toast('Kode tidak boleh kosong'); return; }
   BLOKS[idx].kode = kode;
   BLOKS[idx].luasHa = luasRaw?parseFloat(luasRaw.replace(',','.')):null;
+  BLOKS[idx].rowSpacingCm = spacingRaw?parseInt(spacingRaw):145;
   saveBloks();
   toast('Tersimpan');
   closeModal();

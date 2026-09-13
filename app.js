@@ -505,7 +505,9 @@ function renderCatatPage2(blokId){
     return `<div class="card"><div class="empty-note">Luas (ha) blok ini belum diisi — jumlah row belum bisa dihitung. Isi dulu lewat Kelola No Blok.</div></div>`;
   }
   const rowLines = computeRowLines(pb, est);
+  const statuses = deriveRowStatuses(rows);
   const statusColor = {putih:'rgba(255,255,255,0.12)', hijau:'#3E9B6B', merah:'#B3323C'};
+  const sesiSize = Math.max(1, (window._draft && window._draft.pekerjaHadir ? window._draft.pekerjaHadir.length : 0) || rows.length);
   const datalistOpts = PEKERJA.slice().sort((a,b)=>a.kode.localeCompare(b.kode)).map(p=>`<option value="${escapeHtml(p.kode)}">${escapeHtml(p.kode)} - ${escapeHtml(p.nama)}</option>`).join('');
   return `
     <div id="ck2ImgWrap" style="position:relative;overflow:hidden;margin:-2px -16px 0;height:340px;background:#F3EDE0;touch-action:none;"
@@ -515,7 +517,7 @@ function renderCatatPage2(blokId){
           <defs><clipPath id="ck2clip"><polygon points="${pb.points.map(p=>p.x+','+p.y).join(' ')}"></polygon></clipPath></defs>
           <polygon points="${pb.points.map(p=>p.x+','+p.y).join(' ')}" fill="rgba(47,107,79,0.18)" stroke="#2F6B4F" stroke-width="0.2" vector-effect="non-scaling-stroke"></polygon>
           <g clip-path="url(#ck2clip)">
-            ${rowLines.map(l=>`<line x1="${l.x1}" y1="${l.y1}" x2="${l.x2}" y2="${l.y2}" stroke="${statusColor[rows[l.idx].status]||statusColor.putih}" stroke-width="${l.w}"></line>`).join('')}
+            ${rowLines.map(l=>`<line x1="${l.x1}" y1="${l.y1}" x2="${l.x2}" y2="${l.y2}" stroke="${statusColor[statuses[l.idx]]||statusColor.putih}" stroke-width="${l.w}"></line>`).join('')}
           </g>
           <line x1="${pb.rowP1.x}" y1="${pb.rowP1.y}" x2="${pb.rowP2.x}" y2="${pb.rowP2.y}" stroke="#7A2E38" stroke-width="0.3" stroke-dasharray="1,1" vector-effect="non-scaling-stroke"></line>
         </svg>
@@ -526,21 +528,31 @@ function renderCatatPage2(blokId){
       <button class="pill-btn outline sm" style="flex:1;justify-content:center;" onclick="ck2StartCapture('${pb.id}')">Tandai Ulang Arah Row</button>
       <button class="pill-btn outline sm" style="flex:1;justify-content:center;" onclick="ck2FlipStart('${pb.id}')">&#8646; Row 1 di Sisi Lain</button>
     </div>
+    ${renderDrumWidget()}
 
     <datalist id="ck2PekerjaList">${datalistOpts}</datalist>
-    <div class="section-eyebrow" style="margin-top:12px;">Assignment Kode Pekerja per Row</div>
+    <div class="section-eyebrow" style="margin-top:12px;">Assignment Kode Pekerja per Row ${sesiSize<rows.length?`&middot; sesi @${sesiSize} pekerja`:''}</div>
     <div style="overflow-x:auto;-webkit-overflow-scrolling:touch;border:1px solid var(--outline-variant);border-radius:14px;">
       <table style="border-collapse:collapse;width:max-content;">
         <tr>
-          ${rows.map((r,i)=>`<td style="padding:6px 5px;text-align:center;border-right:1px solid var(--outline-variant);vertical-align:top;">
+          ${rows.map((r,i)=>{
+            const sesiKe = Math.floor(i/sesiSize)+1;
+            const isSesiStart = i%sesiSize===0;
+            return `<td style="padding:2px 5px 0;text-align:center;border-right:1px solid var(--outline-variant);${isSesiStart?'border-left:2px solid var(--primary);':''}">
+              <div style="font-size:9px;color:var(--primary);font-weight:700;height:12px;">${isSesiStart?'Sesi '+sesiKe:''}</div>
+            </td>`;
+          }).join('')}
+        </tr>
+        <tr>
+          ${rows.map((r,i)=>`<td style="padding:2px 5px 6px;text-align:center;border-right:1px solid var(--outline-variant);${i%sesiSize===0?'border-left:2px solid var(--primary);':''}vertical-align:top;">
             <div onclick="showRowHistory('${pb.id}',${i})" style="font-size:11px;font-weight:800;margin-bottom:4px;cursor:pointer;color:var(--on-surface-variant);">${i+1}</div>
-            <input list="ck2PekerjaList" value="${escapeHtml(r.kode||'')}" maxlength="2" style="width:60px;min-height:44px;margin:0;padding:4px;text-align:center;text-transform:uppercase;font-weight:700;font-size:16px;border-bottom:3px solid ${r.status==='merah'?'#B3323C':r.status==='hijau'?'#3E9B6B':'var(--outline)'};"
+            <input list="ck2PekerjaList" value="${escapeHtml(r.kode||'')}" maxlength="2" style="width:60px;min-height:44px;margin:0;padding:4px;text-align:center;text-transform:uppercase;font-weight:700;font-size:16px;border-bottom:3px solid ${statuses[i]==='merah'?'#B3323C':statuses[i]==='hijau'?'#3E9B6B':'var(--outline)'};"
               onchange="setRowKode('${pb.id}',${i},this.value)">
           </td>`).join('')}
         </tr>
       </table>
     </div>
-    <div class="field-sub" style="margin-top:6px;">Ketik kode pekerja per row (harus sudah ada di Kelola Pekerja). Hapus isi kolom = batalkan assignment. Tap nomor row untuk lihat histori.</div>
+    <div class="field-sub" style="margin-top:6px;">Ketik kode pekerja per row (harus sudah ada di Kelola Pekerja). Hapus isi kolom = batalkan assignment. Tap nomor row untuk lihat histori. Hijau = posisi terkini pekerja, merah = sudah dilewati/selesai.</div>
   `;
 }
 function ck2StartCapture(petaId){
@@ -583,25 +595,68 @@ function ck2Tap(evt){
   }
   refreshCk2(PETA_BLOCKS.find(p=>p.id===ck2CapturePetaId)?.blokId);
 }
+function deriveRowStatuses(rows){
+  // hijau = posisi terakhir/terkini pekerja itu (belum ada row lebih lanjut dgn kode sama)
+  // merah = sudah dilewati (ada row dengan index lebih besar & kode sama -> pekerja sudah pindah)
+  // putih = belum ada assignment
+  return rows.map((r,i)=>{
+    if(!r.kode) return 'putih';
+    const hasLater = rows.some((r2,j)=>j>i && r2.kode===r.kode);
+    return hasLater ? 'merah' : 'hijau';
+  });
+}
 function refreshCk2(blokId){
   const el = document.getElementById('ckPage2');
   if(el) el.innerHTML = renderCatatPage2(blokId);
+}
+/* ================= DRUM & TANGKI SEMPROT (global, lintas hari & blok) ================= */
+const DRUM_REFILLS_PER_DRUM = 14; // ~200L drum / ~14.3L rata-rata isi tangki (13-16x)
+let DRUM = LS.get('hz_drum', {nomor:1, isi:0});
+function saveDrum(){ LS.set('hz_drum', DRUM); }
+function drumAddRefill(n){
+  DRUM.isi += n;
+  while(DRUM.isi>=DRUM_REFILLS_PER_DRUM){ DRUM.isi -= DRUM_REFILLS_PER_DRUM; DRUM.nomor++; }
+  while(DRUM.isi<0){ if(DRUM.nomor>1){ DRUM.nomor--; DRUM.isi += DRUM_REFILLS_PER_DRUM; } else { DRUM.isi=0; break; } }
+  saveDrum();
+}
+function drumResetNomor(){
+  if(!confirm('Reset nomor drum ke #1?')) return;
+  DRUM = {nomor:1, isi:0}; saveDrum();
+  const blokId = ck2LastBlokId; refreshCk2(blokId);
+}
+function drumManualAdjust(delta){
+  drumAddRefill(delta);
+  refreshCk2(ck2LastBlokId);
+}
+function renderDrumWidget(){
+  return `
+    <div class="card card-flat" style="margin-top:10px;display:flex;align-items:center;gap:10px;">
+      <div style="flex:1;">
+        <div style="font-size:11px;color:var(--on-surface-variant);font-weight:700;">DRUM & TANGKI SEMPROT</div>
+        <div style="font-size:16px;font-weight:800;">Drum #${DRUM.nomor} &middot; isi ke-${DRUM.isi}/${DRUM_REFILLS_PER_DRUM}</div>
+      </div>
+      <button style="width:34px;height:34px;border-radius:50%;border:1.5px solid var(--outline);background:#fff;font-size:18px;font-weight:700;color:var(--on-surface);" onclick="drumManualAdjust(-1)" title="Kurangi 1 isi ulang">&minus;</button>
+      <button style="width:34px;height:34px;border-radius:50%;border:1.5px solid var(--outline);background:#fff;font-size:18px;font-weight:700;color:var(--on-surface);" onclick="drumManualAdjust(1)" title="Tambah 1 isi ulang">+</button>
+      <button class="pill-btn outline sm" onclick="drumResetNomor()">Reset</button>
+    </div>
+  `;
 }
 function setRowKode(petaId, rowIdx, val){
   const pb = PETA_BLOCKS.find(x=>x.id===petaId);
   if(!pb || !pb.rows || !pb.rows[rowIdx]) return;
   const kode = (val||'').trim().toUpperCase();
   const row = pb.rows[rowIdx];
+  const wasEmpty = !row.kode;
   if(!kode){
-    row.kode = null; row.status = 'putih';
+    row.kode = null;
     savePetaBlocks(); refreshCk2(pb.blokId); return;
   }
   if(!/^[A-Z0-9]{2}$/.test(kode)){ toast('Kode harus 2 karakter'); refreshCk2(pb.blokId); return; }
   if(!PEKERJA.some(p=>p.kode===kode)){ toast('Kode pekerja tidak ditemukan di Kelola Pekerja'); refreshCk2(pb.blokId); return; }
   row.kode = kode;
-  row.status = 'merah';
   row.history = row.history || [];
   row.history.push({kode, ts: Date.now()});
+  if(wasEmpty) drumAddRefill(1); // trigger otomatis: assignment baru = 1x isi ulang tangki
   savePetaBlocks();
   refreshCk2(pb.blokId);
 }
@@ -853,7 +908,7 @@ function syncBlockRows(pb){
   if(!est) return pb.rows||[];
   if(!pb.rows) pb.rows = [];
   let changed = false;
-  while(pb.rows.length < est.jumlahRow){ pb.rows.push({kode:null, status:'putih', history:[]}); changed = true; }
+  while(pb.rows.length < est.jumlahRow){ pb.rows.push({kode:null, history:[]}); changed = true; }
   // Kalau jumlah row berkurang (mis. arah row diubah), baris kelebihan yang MASIH KOSONG dibuang;
   // baris yang sudah ada assignment-nya tidak pernah dihapus otomatis (aman dari kehilangan data).
   while(pb.rows.length > est.jumlahRow && pb.rows[pb.rows.length-1] && !pb.rows[pb.rows.length-1].kode){

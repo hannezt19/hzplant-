@@ -603,65 +603,150 @@ function saveCatatanBaru(){
 
 /* ================= CATAT KERJA — HALAMAN 2 (gambar blok + assignment row) ================= */
 let ck2ZoomScale=1, ck2ZoomX=0, ck2ZoomY=0, ck2TouchState={}, ck2LastBlokId=null;
+let ck2CaptureMode=false, ck2CapturePoints=[], ck2ViewBox=null, ck2CapturePetaId=null;
+function computeRowLines(pb, est){
+  const dx = pb.rowP2.x-pb.rowP1.x, dy = pb.rowP2.y-pb.rowP1.y;
+  const len = Math.hypot(dx,dy)||1;
+  const dirX = dx/len, dirY = dy/len;
+  let perpX = -dirY, perpY = dirX;
+  if(pb.rowFlipped){ perpX=-perpX; perpY=-perpY; }
+  const spacingU = ((est.spacingCm/100) / est.meterPerPctLinear) || 1;
+  const projs = pb.points.map(p=>(p.x-pb.rowP1.x)*perpX + (p.y-pb.rowP1.y)*perpY);
+  const minP = Math.min(...projs), maxP = Math.max(...projs);
+  const L = 500;
+  const lines = [];
+  for(let k=0;k<est.jumlahRow;k++){
+    const offset = minP + spacingU*(k+0.5);
+    if(offset>maxP+spacingU) break;
+    const cx = pb.rowP1.x + perpX*offset, cy = pb.rowP1.y + perpY*offset;
+    lines.push({x1:cx-dirX*L, y1:cy-dirY*L, x2:cx+dirX*L, y2:cy+dirY*L, w: spacingU*0.8, idx:k});
+  }
+  return lines;
+}
 function renderCatatPage2(blokId){
-  if(blokId !== ck2LastBlokId){ ck2ZoomScale=1; ck2ZoomX=0; ck2ZoomY=0; ck2LastBlokId=blokId; }
+  if(blokId !== ck2LastBlokId){ ck2ZoomScale=1; ck2ZoomX=0; ck2ZoomY=0; ck2LastBlokId=blokId; ck2CaptureMode=false; ck2CapturePoints=[]; }
   if(!blokId) return `<div class="card"><div class="empty-note">Pilih No Blok dulu di halaman 1.</div></div>`;
   const pb = PETA_BLOCKS.find(p=>p.blokId===blokId);
   if(!pb){
     return `<div class="card"><div class="empty-note" style="margin-bottom:10px;">Blok ini belum digambar di Peta.</div></div><button class="btn-block outline" onclick="showScreen('peta')">Pilih di Peta</button>`;
   }
-  if(!pb.rowP1 || !pb.rowP2){
-    return `<div class="card"><div class="empty-note" style="margin-bottom:10px;">Arah row belum ditandai untuk blok ini.</div></div><button class="btn-block outline" onclick="showScreen('peta')">Tandai Arah Row di Peta</button>`;
+  const xs = pb.points.map(p=>p.x), ys = pb.points.map(p=>p.y);
+  const minX=Math.min(...xs), maxX=Math.max(...xs), minY=Math.min(...ys), maxY=Math.max(...ys);
+  const pad = 6;
+  const vbX=minX-pad, vbY=minY-pad, vbW=(maxX-minX)+pad*2, vbH=(maxY-minY)+pad*2;
+  ck2ViewBox = {x:vbX, y:vbY, w:vbW, h:vbH};
+  const vb = `${vbX} ${vbY} ${vbW} ${vbH}`;
+
+  if(!pb.rowP1 || !pb.rowP2 || (ck2CaptureMode && ck2CapturePetaId===pb.id)){
+    const capturing = ck2CaptureMode && ck2CapturePetaId===pb.id;
+    return `
+      <div id="ck2ImgWrap" style="position:relative;overflow:hidden;margin:-2px -16px 0;height:340px;background:#F3EDE0;touch-action:none;"
+        ontouchstart="ck2TouchStart(event)" ontouchmove="ck2TouchMove(event)" ontouchend="ck2TouchEnd(event)" onclick="ck2Tap(event)">
+        <div id="ck2ImgInner" style="width:100%;height:100%;transform-origin:center center;transform:scale(${ck2ZoomScale}) translate(${ck2ZoomX}px,${ck2ZoomY}px);">
+          <svg viewBox="${vb}" style="width:100%;height:100%;">
+            <polygon points="${pb.points.map(p=>p.x+','+p.y).join(' ')}" fill="rgba(47,107,79,0.2)" stroke="#2F6B4F" stroke-width="0.2" vector-effect="non-scaling-stroke"></polygon>
+            ${capturing && ck2CapturePoints.length>0 ? ck2CapturePoints.map(p=>petaMarkerDot(p.x,p.y)).join('') : ''}
+            ${capturing && ck2CapturePoints.length===2 ? `<line x1="${ck2CapturePoints[0].x}" y1="${ck2CapturePoints[0].y}" x2="${ck2CapturePoints[1].x}" y2="${ck2CapturePoints[1].y}" stroke="#0B6FE0" stroke-width="0.3" vector-effect="non-scaling-stroke"></line>` : ''}
+          </svg>
+        </div>
+      </div>
+      ${capturing ? `
+        <div class="field-sub" style="text-align:center;margin:8px 0;">Tap 2 titik di gambar mengikuti arah row (titik ke-${ck2CapturePoints.length+1} dari 2)</div>
+        <button class="pill-btn outline" style="width:100%;justify-content:center;" onclick="ck2CancelCapture()">Batal Menandai</button>
+      ` : `
+        <div class="card"><div class="empty-note" style="margin-bottom:10px;">Arah row belum ditandai untuk blok ini.</div></div>
+        <button class="btn-block" onclick="ck2StartCapture('${pb.id}')">Tandai Arah Row di Sini</button>
+      `}
+    `;
   }
+
   const est = estimateRows(pb);
   const rows = syncBlockRows(pb);
   if(!est || rows.length===0){
     return `<div class="card"><div class="empty-note">Luas (ha) blok ini belum diisi — jumlah row belum bisa dihitung. Isi dulu lewat Kelola No Blok.</div></div>`;
   }
-  const xs = pb.points.map(p=>p.x), ys = pb.points.map(p=>p.y);
-  const minX=Math.min(...xs), maxX=Math.max(...xs), minY=Math.min(...ys), maxY=Math.max(...ys);
-  const pad = 6;
-  const vb = `${minX-pad} ${minY-pad} ${(maxX-minX)+pad*2} ${(maxY-minY)+pad*2}`;
+  const rowLines = computeRowLines(pb, est);
+  const statusColor = {putih:'rgba(255,255,255,0.12)', hijau:'#3E9B6B', merah:'#B3323C'};
   const datalistOpts = PEKERJA.slice().sort((a,b)=>a.kode.localeCompare(b.kode)).map(p=>`<option value="${escapeHtml(p.kode)}">${escapeHtml(p.kode)} - ${escapeHtml(p.nama)}</option>`).join('');
   return `
-    <div class="card card-flat" style="padding:8px;">
-      <div id="ck2ImgWrap" style="position:relative;overflow:hidden;border-radius:14px;height:230px;background:#F3EDE0;touch-action:none;"
-        ontouchstart="ck2TouchStart(event)" ontouchmove="ck2TouchMove(event)" ontouchend="ck2TouchEnd(event)">
-        <div id="ck2ImgInner" style="width:100%;height:100%;transform-origin:center center;transform:scale(${ck2ZoomScale}) translate(${ck2ZoomX}px,${ck2ZoomY}px);">
-          <svg viewBox="${vb}" style="width:100%;height:100%;">
-            <polygon points="${pb.points.map(p=>p.x+','+p.y).join(' ')}" fill="rgba(47,107,79,0.25)" stroke="#2F6B4F" stroke-width="0.2" vector-effect="non-scaling-stroke"></polygon>
-            <line x1="${pb.rowP1.x}" y1="${pb.rowP1.y}" x2="${pb.rowP2.x}" y2="${pb.rowP2.y}" stroke="#7A2E38" stroke-width="0.3" vector-effect="non-scaling-stroke"></line>
-          </svg>
-        </div>
+    <div id="ck2ImgWrap" style="position:relative;overflow:hidden;margin:-2px -16px 0;height:340px;background:#F3EDE0;touch-action:none;"
+      ontouchstart="ck2TouchStart(event)" ontouchmove="ck2TouchMove(event)" ontouchend="ck2TouchEnd(event)">
+      <div id="ck2ImgInner" style="width:100%;height:100%;transform-origin:center center;transform:scale(${ck2ZoomScale}) translate(${ck2ZoomX}px,${ck2ZoomY}px);">
+        <svg viewBox="${vb}" style="width:100%;height:100%;">
+          <defs><clipPath id="ck2clip"><polygon points="${pb.points.map(p=>p.x+','+p.y).join(' ')}"></polygon></clipPath></defs>
+          <polygon points="${pb.points.map(p=>p.x+','+p.y).join(' ')}" fill="rgba(47,107,79,0.18)" stroke="#2F6B4F" stroke-width="0.2" vector-effect="non-scaling-stroke"></polygon>
+          <g clip-path="url(#ck2clip)">
+            ${rowLines.map(l=>`<line x1="${l.x1}" y1="${l.y1}" x2="${l.x2}" y2="${l.y2}" stroke="${statusColor[rows[l.idx].status]||statusColor.putih}" stroke-width="${l.w}"></line>`).join('')}
+          </g>
+          <line x1="${pb.rowP1.x}" y1="${pb.rowP1.y}" x2="${pb.rowP2.x}" y2="${pb.rowP2.y}" stroke="#7A2E38" stroke-width="0.3" stroke-dasharray="1,1" vector-effect="non-scaling-stroke"></line>
+        </svg>
       </div>
-      <div class="field-sub" style="text-align:center;margin-top:6px;">Cubit untuk perbesar &middot; tampilan saja (tidak bisa disentuh untuk input)</div>
+      <div style="position:absolute;left:10px;bottom:8px;background:rgba(0,0,0,.45);color:#fff;font-size:11px;padding:4px 9px;border-radius:100px;">${rows.length} row &middot; jarak ${est.spacingCm}cm &middot; cubit utk zoom</div>
     </div>
-
-    <div class="section-eyebrow">Status Row (${rows.length} row &middot; jarak ${est.spacingCm}cm)</div>
-    <div style="display:flex;gap:4px;overflow-x:auto;padding:2px 0 12px;">
-      ${rows.map((r,i)=>`<div onclick="showRowHistory('${pb.id}',${i})" style="flex:0 0 auto;width:30px;height:30px;border-radius:8px;display:flex;align-items:center;justify-content:center;font-size:11px;font-weight:700;cursor:pointer;
-        background:${r.status==='merah'?'var(--danger-container)':r.status==='hijau'?'var(--success-container)':'#fff'};
-        color:${r.status==='merah'?'var(--danger)':r.status==='hijau'?'var(--success)':'var(--on-surface-variant)'};
-        border:1.5px solid ${r.status==='merah'?'var(--danger)':r.status==='hijau'?'var(--success)':'var(--outline)'};">${i+1}</div>`).join('')}
+    <div style="display:flex;gap:8px;margin-top:8px;">
+      <button class="pill-btn outline sm" style="flex:1;justify-content:center;" onclick="ck2StartCapture('${pb.id}')">Tandai Ulang Arah Row</button>
+      <button class="pill-btn outline sm" style="flex:1;justify-content:center;" onclick="ck2FlipStart('${pb.id}')">&#8646; Row 1 di Sisi Lain</button>
     </div>
 
     <datalist id="ck2PekerjaList">${datalistOpts}</datalist>
-    <div class="section-eyebrow">Assignment Kode Pekerja per Row</div>
-    <div style="overflow-x:auto;-webkit-overflow-scrolling:touch;border:1px solid var(--outline-variant);border-radius:14px;position:sticky;bottom:0;background:var(--surface-container);">
+    <div class="section-eyebrow" style="margin-top:12px;">Assignment Kode Pekerja per Row</div>
+    <div style="overflow-x:auto;-webkit-overflow-scrolling:touch;border:1px solid var(--outline-variant);border-radius:14px;">
       <table style="border-collapse:collapse;width:max-content;">
         <tr>
-          ${rows.map((r,i)=>`<td style="padding:6px 4px;text-align:center;font-size:11px;font-weight:700;color:var(--on-surface-variant);border-right:1px solid var(--outline-variant);min-width:44px;">${i+1}</td>`).join('')}
-        </tr>
-        <tr>
-          ${rows.map((r,i)=>`<td style="padding:4px;border-right:1px solid var(--outline-variant);border-top:1px solid var(--outline-variant);">
-            <input list="ck2PekerjaList" value="${escapeHtml(r.kode||'')}" maxlength="2" style="width:40px;min-height:38px;margin:0;padding:4px;text-align:center;text-transform:uppercase;font-weight:700;"
+          ${rows.map((r,i)=>`<td style="padding:6px 5px;text-align:center;border-right:1px solid var(--outline-variant);vertical-align:top;">
+            <div onclick="showRowHistory('${pb.id}',${i})" style="font-size:11px;font-weight:800;margin-bottom:4px;cursor:pointer;color:var(--on-surface-variant);">${i+1}</div>
+            <input list="ck2PekerjaList" value="${escapeHtml(r.kode||'')}" maxlength="2" style="width:60px;min-height:44px;margin:0;padding:4px;text-align:center;text-transform:uppercase;font-weight:700;font-size:16px;border-bottom:3px solid ${r.status==='merah'?'#B3323C':r.status==='hijau'?'#3E9B6B':'var(--outline)'};"
               onchange="setRowKode('${pb.id}',${i},this.value)">
           </td>`).join('')}
         </tr>
       </table>
     </div>
-    <div class="field-sub" style="margin-top:6px;">Ketik kode pekerja per row (harus sudah ada di Kelola Pekerja). Hapus isi kolom = batalkan assignment. Tap kotak warna di atas untuk lihat histori row.</div>
+    <div class="field-sub" style="margin-top:6px;">Ketik kode pekerja per row (harus sudah ada di Kelola Pekerja). Hapus isi kolom = batalkan assignment. Tap nomor row untuk lihat histori.</div>
   `;
+}
+function ck2StartCapture(petaId){
+  ck2CaptureMode = true; ck2CapturePoints = []; ck2CapturePetaId = petaId;
+  refreshCk2(PETA_BLOCKS.find(x=>x.id===petaId)?.blokId);
+}
+function ck2CancelCapture(){
+  const blokId = PETA_BLOCKS.find(x=>x.id===ck2CapturePetaId)?.blokId;
+  ck2CaptureMode = false; ck2CapturePoints = []; ck2CapturePetaId = null;
+  refreshCk2(blokId);
+}
+function ck2FlipStart(petaId){
+  const pb = PETA_BLOCKS.find(x=>x.id===petaId); if(!pb) return;
+  pb.rowFlipped = !pb.rowFlipped;
+  savePetaBlocks();
+  refreshCk2(pb.blokId);
+}
+function ck2Tap(evt){
+  if(ck2TouchState && ck2TouchState.moved) return;
+  if(!ck2CaptureMode || !ck2ViewBox) return;
+  const wrap = document.getElementById('ck2ImgWrap');
+  const rect = wrap.getBoundingClientRect();
+  const touch = evt.changedTouches ? evt.changedTouches[0] : evt;
+  const screenX = touch.clientX - rect.left, screenY = touch.clientY - rect.top;
+  const localX = rect.width/2 + (screenX-rect.width/2)/ck2ZoomScale - ck2ZoomX;
+  const localY = rect.height/2 + (screenY-rect.height/2)/ck2ZoomScale - ck2ZoomY;
+  const contentAspect = ck2ViewBox.w/ck2ViewBox.h, boxAspect = rect.width/rect.height;
+  let rw, rh, offX, offY;
+  if(boxAspect > contentAspect){ rh = rect.height; rw = rh*contentAspect; offX=(rect.width-rw)/2; offY=0; }
+  else { rw = rect.width; rh = rw/contentAspect; offX=0; offY=(rect.height-rh)/2; }
+  const x = (localX-offX)/rw*ck2ViewBox.w + ck2ViewBox.x;
+  const y = (localY-offY)/rh*ck2ViewBox.h + ck2ViewBox.y;
+  ck2CapturePoints.push({x, y});
+  if(ck2CapturePoints.length>=2){
+    const pb = PETA_BLOCKS.find(p=>p.id===ck2CapturePetaId);
+    if(pb){
+      pb.rowP1 = ck2CapturePoints[0]; pb.rowP2 = ck2CapturePoints[1];
+      savePetaBlocks();
+      toast('Arah row disimpan');
+    }
+    ck2CaptureMode = false; ck2CapturePoints = []; ck2CapturePetaId = null;
+    refreshCk2(pb?pb.blokId:null);
+    return;
+  }
+  refreshCk2(PETA_BLOCKS.find(p=>p.id===ck2CapturePetaId)?.blokId);
 }
 function refreshCk2(blokId){
   const el = document.getElementById('ckPage2');
@@ -721,12 +806,14 @@ function ck2TouchMove(evt){
     evt.preventDefault();
     const d = Math.hypot(evt.touches[0].clientX-evt.touches[1].clientX, evt.touches[0].clientY-evt.touches[1].clientY);
     ck2ZoomScale = Math.min(20, Math.max(1, ck2TouchState.startScale * (d/ck2TouchState.startDist)));
+    ck2TouchState.moved = true;
     ck2Clamp();
     const el = document.getElementById('ck2ImgInner'); if(el) el.style.transform = `scale(${ck2ZoomScale}) translate(${ck2ZoomX}px,${ck2ZoomY}px)`;
   } else if(evt.touches.length===1 && ck2TouchState.startX!==undefined && ck2ZoomScale>1){
     evt.preventDefault();
     const dx = (evt.touches[0].clientX - ck2TouchState.startX)/ck2ZoomScale;
     const dy = (evt.touches[0].clientY - ck2TouchState.startY)/ck2ZoomScale;
+    if(Math.abs(dx)>3||Math.abs(dy)>3) ck2TouchState.moved = true;
     ck2ZoomX = ck2TouchState.baseX + dx; ck2ZoomY = ck2TouchState.baseY + dy;
     ck2Clamp();
     const el = document.getElementById('ck2ImgInner'); if(el) el.style.transform = `scale(${ck2ZoomScale}) translate(${ck2ZoomX}px,${ck2ZoomY}px)`;
@@ -884,16 +971,12 @@ function handlePetaUpload(ev){
 // Membuat titik penanda di peta berbentuk cincin bulat sempurna + crosshair
 // di tengahnya (seperti teropong bidik), warna biru cerah dan kontras tinggi
 // supaya selalu jelas terlihat di atas foto peta apa pun.
-function petaMarkerDot(x, y, rw, rh, pxRadius){
-  pxRadius = pxRadius || 7;
-  const rx = (pxRadius / rw * 100).toFixed(4);
-  const ry = (pxRadius / rh * 100).toFixed(4);
-  const armX = (pxRadius * 2.1 / rw * 100).toFixed(4);
-  const armY = (pxRadius * 2.1 / rh * 100).toFixed(4);
+function petaMarkerDot(x, y){
+  const r = 1.6, arm = 3.6;
   return `<g>
-    <ellipse cx="${x}" cy="${y}" rx="${rx}" ry="${ry}" fill="rgba(30,144,255,0.35)" stroke="#0B6FE0" stroke-width="2.4" vector-effect="non-scaling-stroke"></ellipse>
-    <line x1="${(x-armX).toFixed(4)}" y1="${y}" x2="${(x+armX).toFixed(4)}" y2="${y}" stroke="#0B6FE0" stroke-width="1.6" vector-effect="non-scaling-stroke"></line>
-    <line x1="${x}" y1="${(y-armY).toFixed(4)}" x2="${x}" y2="${(y+armY).toFixed(4)}" stroke="#0B6FE0" stroke-width="1.6" vector-effect="non-scaling-stroke"></line>
+    <ellipse cx="${x}" cy="${y}" rx="${r}" ry="${r}" fill="rgba(30,144,255,0.4)" stroke="#0B6FE0" stroke-width="0.4" vector-effect="non-scaling-stroke"></ellipse>
+    <line x1="${(x-arm).toFixed(3)}" y1="${y}" x2="${(x+arm).toFixed(3)}" y2="${y}" stroke="#0B6FE0" stroke-width="0.35" vector-effect="non-scaling-stroke"></line>
+    <line x1="${x}" y1="${(y-arm).toFixed(3)}" x2="${x}" y2="${(y+arm).toFixed(3)}" stroke="#0B6FE0" stroke-width="0.35" vector-effect="non-scaling-stroke"></line>
   </g>`;
 }
 function polygonAreaPct(points){
@@ -927,7 +1010,7 @@ function estimateRows(block){
   const widthM = (b.luasHa*10000)/rowLenM;
   const spacingM = (b.rowSpacingCm||145)/100;
   const jumlahRow = Math.max(1, Math.round(widthM/spacingM));
-  return {rowLenM: Math.round(rowLenM), widthM: Math.round(widthM), jumlahRow, spacingCm: b.rowSpacingCm||145};
+  return {rowLenM: Math.round(rowLenM), widthM: Math.round(widthM), jumlahRow, spacingCm: b.rowSpacingCm||145, meterPerPctLinear};
 }
 // Struktur per-row (status pengerjaan & assignment kode pekerja) menyatu di PETA_BLOCKS[i].rows:
 // [{kode:null|'AB', status:'putih'|'hijau'|'merah', history:[{kode,ts}]}]
@@ -1101,11 +1184,10 @@ function showPetaBlockOptions(id){
     ${b && b.luasHa ? `<div class="field-sub" style="margin-bottom:10px;">Luas: ${escapeHtml(b.luasHa)} ha</div>` : `<div class="field-sub" style="margin-bottom:10px;color:var(--danger);">Luas (ha) belum diisi di Kelola No Blok — perkiraan row tidak bisa dihitung.</div>`}
     ${pb.rowP1 && pb.rowP2 ? `
       <div class="card card-flat">
-        <div class="field-sub">Arah row sudah ditandai.</div>
+        <div class="field-sub">Arah row sudah ditandai (lewat Catat Kerja).</div>
         ${est ? `<div style="font-size:15px;font-weight:700;margin-top:6px;">&plusmn; ${est.jumlahRow} row (perkiraan)</div><div class="field-sub">Panjang row &plusmn;${est.rowLenM}m &middot; Lebar blok &plusmn;${est.widthM}m &middot; jarak ${est.spacingCm}cm</div>` : ''}
       </div>
-    ` : '<div class="field-sub" style="margin-bottom:10px;">Arah row belum ditandai.</div>'}
-    <button class="btn-block" style="margin-top:10px;" onclick="closeModal();startRowCapture('${pb.id}')">Tandai Arah Row</button>
+    ` : '<div class="field-sub" style="margin-bottom:10px;">Arah row belum ditandai — tandai lewat halaman Catat Kerja (pilih blok ini di halaman 1, lalu geser ke halaman 2).</div>'}
     <button class="pill-btn outline" style="margin-top:10px;width:100%;justify-content:center;" onclick="showEditBlokName('${pb.id}')">Ubah Nama/Luas</button>
     <button class="pill-btn outline" style="margin-top:10px;width:100%;justify-content:center;" onclick="deletePetaBlock('${pb.id}');closeModal();">Hapus Blok dari Peta</button>
   `);

@@ -14,12 +14,14 @@
   mendeteksi file sw.js berubah, menyiapkan cache baru, lalu menawarkan
   banner "Update tersedia" ke pengguna di index.html.
 */
-const CACHE_VERSION = 'v11';
+const CACHE_VERSION = 'v12';
 const CACHE_NAME = `hzplant-${CACHE_VERSION}`;
 
 const APP_SHELL = [
   './',
   './index.html',
+  './style.css',
+  './app.js',
   './manifest.json',
   './icon-192.png',
   './icon-512.png'
